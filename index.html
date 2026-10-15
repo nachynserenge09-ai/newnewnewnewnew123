@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>КМТ</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:var(--tg-theme-bg-color,#fff);--tx:var(--tg-theme-text-color,#111);--hint:var(--tg-theme-hint-color,#7d8590);
+--card:var(--tg-theme-secondary-bg-color,#f1f3f5);--btn:var(--tg-theme-button-color,#2481cc);--btx:var(--tg-theme-button-text-color,#fff)}
+*{box-sizing:border-box}
+body{margin:0;padding:16px 16px 40px;background:var(--bg);color:var(--tx);font:16px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif}
+h1{font-size:22px;margin:0}.sub{color:var(--hint);font-size:14px;margin-top:2px}
+header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.gpa{text-align:right}.gpa b{display:block;font-size:26px}.gpa span{font-size:12px;color:var(--hint)}
+nav{display:flex;gap:6px;background:var(--card);padding:4px;border-radius:12px;margin-bottom:14px}
+nav button{flex:1;border:0;background:none;color:var(--hint);padding:9px;border-radius:9px;font:inherit;font-weight:600}
+nav button.on{background:var(--bg);color:var(--tx)}
+.days{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
+.days button{flex:1 0 auto;border:0;background:var(--card);color:var(--tx);padding:8px 14px;border-radius:10px;font:inherit;font-size:14px;white-space:nowrap}
+.days button.on{background:var(--btn);color:var(--btx)}
+.row{display:flex;gap:12px;padding:12px;background:var(--card);border-radius:12px;margin-bottom:8px}
+.row .n{font-weight:700;width:18px;color:var(--hint)}.row .t{font-size:13px;color:var(--hint)}
+.row .m{flex:1}.row .s{font-weight:600}
+.pill{display:inline-block;min-width:26px;text-align:center;padding:2px 7px;margin:2px 4px 0 0;border-radius:8px;background:var(--bg);font-weight:700}
+.g5{color:#2e9e57}.g4{color:#3b82c4}.g3{color:#d08a1a}.g2{color:#d23f3f}
+.avg{font-weight:700;font-size:18px}
+a{color:var(--btn);cursor:pointer}
+.empty,.err{color:var(--hint);text-align:center;padding:30px 0}.err{color:#d23f3f}
+input,select{width:100%;padding:12px;margin:6px 0 12px;border-radius:10px;border:1px solid var(--hint);background:var(--bg);color:var(--tx);font:inherit}
+.btn{width:100%;border:0;border-radius:10px;padding:13px;background:var(--btn);color:var(--btx);font:inherit;font-weight:600}
+</style>
+</head>
+<body>
+<div id="app"><div class="empty">Загрузка…</div></div>
+<script>
+const tg = Telegram.WebApp; tg.ready(); tg.expand();
+const $ = s => document.querySelector(s);
+const SHORT = {"Понедельник":"Пн","Вторник":"Вт","Среда":"Ср","Четверг":"Чт","Пятница":"Пт","Суббота":"Сб"};
+let state = {tab:"schedule", date:null};
+
+async function api(path, opts={}) {
+  const r = await fetch(path, {...opts, headers: {
+    "X-Init-Data": tg.initData, "ngrok-skip-browser-warning": "1",
+    ...(opts.body ? {"Content-Type":"application/json"} : {})}});
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+  return r.json();
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function start() {
+  try {
+    const me = await api("/api/me");
+    state.me = me;
+    me.registered ? await main() : registerForm();
+  } catch (e) { $("#app").innerHTML = `<div class="err">Не удалось подключиться: ${esc(e.message)}</div>`; }
+}
+
+function registerForm() {
+  const m = state.me;
+  $("#app").innerHTML = `<h1>Добро пожаловать</h1><div class="sub">Укажите имя и группу, чтобы видеть своё расписание и оценки</div><br>
+  <label>Фамилия и имя</label><input id="nm" value="${esc(m.name)}">
+  <label>Группа</label><select id="gr">${m.groups.map(g=>`<option ${g===m.group?"selected":""}>${esc(g)}</option>`).join("")}</select>
+  <button class="btn" id="go">Продолжить</button>`;
+  $("#go").onclick = async () => {
+    const name = $("#nm").value.trim(); if (!name) return;
+    await api("/api/register", {method:"POST", body: JSON.stringify({name, group: $("#gr").value})});
+    state.me = await api("/api/me"); main();
+  };
+}
+
+async function main() {
+  const [sch, gr] = await Promise.all([api("/api/schedule"), api("/api/grades")]);
+  state.sch = sch; state.gr = gr; render();
+}
+
+function render() {
+  const m = state.me, gpa = state.gr.gpa;
+  $("#app").innerHTML = `<header><div><h1>${esc(m.name)}</h1><div class="sub">Группа ${esc(m.group)} · <a id="chg">сменить</a></div></div>
+    <div class="gpa"><b>${gpa ?? "—"}</b><span>средний балл</span></div></header>
+    <nav>${[["schedule","Расписание"],["bells","Звонки"],["grades","Оценки"]]
+      .map(([k,l])=>`<button data-t="${k}" class="${state.tab===k?"on":""}">${l}</button>`).join("")}</nav>
+    <div id="view"></div>`;
+  $("#chg").onclick = registerForm;
+  document.querySelectorAll("nav button").forEach(b => b.onclick = () => {state.tab = b.dataset.t; render();});
+  ({schedule: viewSchedule, bells: viewBells, grades: viewGrades})[state.tab]();
+}
+
+function localIso() {
+  const t = new Date(), p = n => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${p(t.getMonth()+1)}-${p(t.getDate())}`;
+}
+
+function viewSchedule() {
+  const ds = state.sch.dates;
+  if (!ds.length) { $("#view").innerHTML = `<div class="empty">Расписание пока не загружено. Попробуйте позже.</div>`; return; }
+  if (!ds.some(d => d.date === state.date)) {
+    const t = localIso();
+    state.date = (ds.find(d => d.iso >= t) || ds[ds.length-1]).date;
+  }
+  const cur = ds.find(d => d.date === state.date);
+  const bells = Object.fromEntries(state.sch.bells.map(b => [b.n, b]));
+  const room = r => !r ? "" : r === "ДО" ? "дистанционно" : "каб. " + r;
+  $("#view").innerHTML = `<div class="days">${ds.map(d => `<button data-d="${esc(d.date)}" class="${d.date===state.date?"on":""}">${SHORT[d.weekday]||""} ${d.date.slice(0,5)}</button>`).join("")}</div>` +
+    (cur.lessons.length ? cur.lessons.map(l => `<div class="row"><div class="n">${l.num}</div><div class="m">
+      <div class="s">${esc(l.title)}</div><div class="t">${esc(room(l.room))}</div></div>
+      <div class="t">${bells[l.num] ? bells[l.num].start+"–"+bells[l.num].end : ""}</div></div>`).join("")
+      : `<div class="empty">В этот день пар нет</div>`);
+  document.querySelectorAll(".days button").forEach(b => b.onclick = () => {state.date = b.dataset.d; viewSchedule();});
+}
+
+function viewBells() {
+  $("#view").innerHTML = state.sch.bells.map(b => `<div class="row"><div class="n">${b.n}</div>
+    <div class="m s">${b.start} – ${b.end}</div></div>`).join("");
+}
+
+function viewGrades() {
+  const it = state.gr.items;
+  $("#view").innerHTML = it.length ? it.map(x => `<div class="row"><div class="m"><div class="s">${esc(x.subject)}</div>
+    <div>${x.grades.map(g=>`<span class="pill g${g}">${g}</span>`).join("")}</div></div><div class="avg">${x.avg}</div></div>`).join("")
+    : `<div class="empty">Оценок пока нет</div>`;
+}
+start();
+</script>
+</body>
+</html>
